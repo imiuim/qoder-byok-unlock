@@ -55,6 +55,19 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 ## 更新日志
 
+### 2026-11-08（v1.2 看门狗）
+
+- **新增 `watchdog.ps1`**：定时校验当前运行版本的 BYOK 补丁是否在位（只读检查，node 校验 asar/worker 特征串）；失效时可选 `-AutoRepair` 自动重跑 unlock.ps1 并重启 Qoder。日志写入 `watchdog.log`，状态存 `watchdog.state.json`（避免每次轮询刷日志）。
+  ```powershell
+  # 只查一次
+  powershell -ExecutionPolicy Bypass -File watchdog.ps1 -CheckOnce
+  # 常驻看门狗：每 5 分钟检查，失效自动修复（会结束并重启 Qoder）
+  powershell -ExecutionPolicy Bypass -File watchdog.ps1 -AutoRepair
+  # 自定义间隔
+  powershell -ExecutionPolicy Bypass -File watchdog.ps1 -IntervalSec 600 -AutoRepair
+  ```
+  注意：看门狗只能修复"客户端补丁丢失"（Qoder 更新/版本切换覆盖了 asar 或 worker）；智能体团队的服务端模型目录限制、BYOK 服务未就绪的瞬时抖动不属于可修复范围。
+
 ### 2026-11-08（v1.1 安全与健壮性修复）
 
 - **修复 fuse 备份顺序**：旧版先翻转 fuse 再备份 Qoder.exe，导致 `.bak-unlock` 存的是已修改状态，回滚无法恢复原版；现在先备份后翻转。
