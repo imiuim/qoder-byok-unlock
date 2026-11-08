@@ -28,12 +28,44 @@ function Ok($m){ Write-Host "[OK] $m" -ForegroundColor Green }
 function Info($m){ Write-Host "[..] $m" -ForegroundColor Cyan }
 
 # ---------- 定位 Qoder ----------
-$candidates = @(
-  "$env:LOCALAPPDATA\Programs\Qoder",
-  'G:\Qoder', 'D:\Qoder', 'C:\Qoder'
-) | Where-Object { Test-Path "$_\Qoder.exe" -ErrorAction SilentlyContinue }
-$candidates = @($candidates)   # 单元素管道会退化为标量
-if ($candidates.Count -eq 0 -or -not $candidates[0]) { Fail "未找到 Qoder 安装目录（找过 G:\Qoder / D:\Qoder / C:\Qoder / %LOCALAPPDATA%\Programs\Qoder）" }
+# 途径1: 启动器配置（%LOCALAPPDATA%\Qoder\Qoder Launcher\state.ini / install.ini 的 installDir=）
+function Get-FromLauncherIni {
+  $results = @()
+  foreach ($base in @("$env:LOCALAPPDATA\Qoder\Qoder Launcher", "$env:LOCALAPPDATA\Qoder CN\Qoder CN Launcher")) {
+    foreach ($ini in @((Join-Path $base 'state.ini'), (Join-Path $base 'install.ini'))) {
+      if (-not (Test-Path $ini)) { continue }
+      try {
+        $txt = [IO.File]::ReadAllText($ini)
+        if ($txt -match "\x00") { $txt = [IO.File]::ReadAllText($ini, [Text.Encoding]::Unicode) }
+        if ($txt -match "installDir\s*=\s*(.+?)\s*$") {
+          $d = $Matches[1].Trim()
+          if ($d -and (Test-Path (Join-Path $d 'Qoder.exe'))) { $results += $d }
+        }
+      } catch {}
+    }
+  }
+  return $results
+}
+# 途径2: 注册表卸载记录（DisplayIcon 指向 Qoder.exe）
+function Get-FromRegistry {
+  $out = @()
+  try {
+    $keys = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*','HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+      Where-Object { $_.DisplayName -like 'Qoder*' -and $_.DisplayIcon }
+    foreach ($k in $keys) {
+      $exe = ($k.DisplayIcon -split ',')[0].Trim()
+      if ($exe -and (Test-Path $exe)) { $out += (Split-Path $exe) }
+    }
+  } catch {}
+  return $out
+}
+# 途径3: 常见路径直查
+$candidates = @()
+$candidates += Get-FromLauncherIni
+$candidates += Get-FromRegistry
+$candidates += @("$env:LOCALAPPDATA\Programs\Qoder", 'G:\Qoder', 'D:\Qoder', 'E:\Qoder', 'C:\Qoder')
+$candidates = @($candidates | Where-Object { $_ -and (Test-Path (Join-Path $_ 'Qoder.exe')) } | Select-Object -Unique)
+if ($candidates.Count -eq 0 -or -not $candidates[0]) { Fail "未找到 Qoder 安装目录。已探测：启动器 state.ini/install.ini、注册表卸载记录、常见盘符。请确认 Qoder.exe 实际位置。" }
 $root = $candidates[0]
 Info "Qoder 根目录: $root"
 
