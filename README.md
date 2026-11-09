@@ -55,6 +55,28 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 > 注：由 v1.x 脚本（fuse 备份顺序有误的旧版）创建的 `.bak-unlock` exe 备份本身就是 fuse 已关闭的状态，用旧备份回滚后请务必补跑 `restore-fuse.ps1`。
 
+## 故障排查
+
+### 团队会话提示"当前账号无法继续此团队会话 / 请切回创建会话的账号"
+
+这不是客户端补丁失效。本地数据（`main.sqlite` 里 `agent_teams`/`agent_team_members` 的 `account_id`）与当前登录账号一致时仍出现，说明是**服务端账号身份重绑定**：
+
+判别证据（按顺序查）：
+1. `%APPDATA%\com.qoder.app.stable\logs\<最新>\main.log` 出现 `QODER_APP_QCS_ACCOUNT_CHANGED` —— 服务端通知过账号身份变更
+2. `~/.qoder/state.json` 的 `lastLoginMethod` 为 `job_token` —— 客户端以任务令牌方式认证，与正常浏览器登录的身份不同
+3. `main.sqlite` 的 `collaboration_runtime_credentials` 出现两个不同的 `qoder:prod:global:<hash>` scope —— 两个身份的运行凭证并存
+
+常见诱因：客户端大版本更新后重新认证（如 0.5.6→0.5.7)，服务端把同一邮箱的内部账号 ID 换了，已创建的团队会话仍绑定旧身份。
+
+处理：
+- 退出登录，用**正常浏览器方式**重新登录（避免 job_token 方式）
+- **新建**团队会话（新会话绑定当前身份，可用）；旧会话需 Qoder 官方在服务端迁移归属
+- 本地数据库无需也不应改动（见下条警告）
+
+### ⚠️ 不要在 Qoder 运行时直接改 main.sqlite
+
+`main.sqlite` 位于 `%APPDATA%\com.qoder.app.stable\`。daemon 运行期间外部写入会导致启动时 `INVALID_SERVER_IDENTITY`（`persistAccount` 阶段失败，应用直接退出）。必须改库时：先完全退出 Qoder（含 daemon)，改完把 `application-run-state.v1` 重置为 `stopped` 再启动。改前备份整个 `com.qoder.app.stable` 目录。
+
 ## 更新日志
 
 ### 2026-11-09（v1.5 fuse 与 BOM 两个致命 bug）
