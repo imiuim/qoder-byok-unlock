@@ -127,7 +127,7 @@ foreach ($m in $migrations) {
     $old = Get-Content $mergeFile -Raw | ConvertFrom-Json
     if (($old.providers) -and -not ($cur.providers)) {
       $cur | Add-Member -NotePropertyName providers -NotePropertyValue $old.providers -Force
-      $cur | ConvertTo-Json -Depth 20 | Set-Content "$dst\settings.json" -Encoding UTF8
+      [IO.File]::WriteAllText("$dst\settings.json", ($cur | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
       Ok "已从目标备份合并 providers"
     }
     Remove-Item $mergeFile -Force

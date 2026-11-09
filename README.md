@@ -57,6 +57,14 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 ## 更新日志
 
+### 2026-11-09（v1.5 fuse 与 BOM 两个致命 bug）
+
+- **fuse 翻转静默失效**：`@electron/fuses@1.3.0` 的 `FuseV1Options` 只导出 `RunAsNode`/`EnableCookieEncryption` 两项，`EnableEmbeddedAsarIntegrityValidation` 为 `undefined`，`flipFuses` 收到 `{"undefined":false}` 什么都不做。结果：脚本报"fuse 已关闭"，但 wire 里 index 4 仍是 `49`(开)，改完 asar 后 Qoder 直接拒绝启动。
+  修复：`unlock-v2.ps1` / `restore-fuse.ps1` 不再依赖枚举，按 wire 布局(`SENTINEL + 2 + 4`)直接读写字节，并在改 asar 前二次校验确认为 `48`(关)。
+- **settings.json BOM**：PowerShell 5.1 的 `Set-Content -Encoding UTF8` 会写 BOM，Qoder 解析时报 `[main-model-anchor] read user settings failed: SyntaxError: Unexpected token '\uFEFF'`，导致默认模型/上次选中模型读不到 → 新窗口回退官方 `auto` → 走服务端 403 `code 112` → 弹"无法继续团队对话"。
+  修复：`watchdog.ps1` / `migrate.ps1` 一律改用 `UTF8Encoding($false)` 无 BOM 写入。
+- 0.5.7 实测：重启后 `main-model-anchor` 报错消失、112=0、自定义模型 18/18 可见且 `group/chain` enabled、fuse=48、providers=1。
+
 ### 2026-11-09（v1.4 适配 Qoder 0.5.7 自动更新）
 
 - **根因**：0.5.7 起 `app.asar` 改为 `<安装目录>\resources\app.asar`(根目录布局)，不再在 `.qoder-versions\<版本>\`。自动更新后旧补丁全部落空，运行的是干净版本；团队会话回退到官方 `auto` 模型 → 请求打向 Qoder 服务端 → 403 `code 112` → 提示无法继续团队对话。

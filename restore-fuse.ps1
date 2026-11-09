@@ -43,15 +43,21 @@ if (-not (Test-Path $fusesJs)) { Write-Host "[X] @electron/fuses 不可用（需
 
 $restoreScript = Join-Path $env:TEMP 'qoder-restore-fuse.cjs'
 @'
-const f=require(process.argv[3]);
-(async()=>{
-  await f.flipFuses(process.argv[2],{version:f.FuseVersion.V1,[f.FuseV1Options.EnableEmbeddedAsarIntegrityValidation]:true});
-  const w=await f.getCurrentFuseWire(process.argv[2]);
-  console.log('fuse wire:',JSON.stringify(w));
-  const on = w[f.FuseV1Options.EnableEmbeddedAsarIntegrityValidation];
-  if(!on){console.error('fuse still off');process.exit(1)}
-  console.log('ASAR integrity fuse ON');
-})().catch(e=>{console.error('ERR',e.message);process.exit(1)});
+// 直接按 wire 布局把 index 4 置为 49('1'=enabled)，避免依赖残缺的 FuseV1Options 枚举
+const fs=require('fs');const path=require('path');
+const {SENTINEL}=require(path.join(path.dirname(process.argv[3]),'constants.js'));
+const exe=process.argv[2];
+const b=fs.readFileSync(exe);
+const pos=b.indexOf(Buffer.from(SENTINEL));
+if(pos<0)throw new Error('fuse sentinel not found');
+const wp=pos+Buffer.byteLength(SENTINEL);
+const len=b[wp+1];
+if(len<=4)throw new Error('fuse wire too short: '+len);
+b[wp+2+4]=49;
+fs.writeFileSync(exe,b);
+console.log('fuse wire:',JSON.stringify(Array.from(b.slice(wp+2,wp+2+len))));
+if(b[wp+2+4]!==49){console.error('fuse still off');process.exit(1)}
+console.log('ASAR integrity fuse ON');
 '@ | Set-Content $restoreScript -Encoding UTF8
 
 Write-Host "[..] 重新开启 ASAR integrity fuse..." -ForegroundColor Cyan

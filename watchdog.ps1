@@ -133,8 +133,10 @@ function Invoke-ProviderConfigCheck {
 
   if ($count -gt 0) {
     # 配置健在：更新快照（含首次建立）
+    # 注意：PS5.1 的 -Encoding UTF8 会写 BOM，Qoder 解析 settings.json 会因 BOM 报
+    # "Unexpected token '\uFEFF'" 而丢失默认模型，必须用无 BOM 的 UTF8。
     try {
-      $providers | ConvertTo-Json -Depth 20 | Set-Content $snapshot -Encoding UTF8
+      [IO.File]::WriteAllText($snapshot, ($providers | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
     } catch {}
     return
   }
@@ -148,8 +150,8 @@ function Invoke-ProviderConfigCheck {
     if ($n -eq 0) { Log '[!] 快照为空，跳过恢复'; return }
     $d = Get-Content $settings -Raw | ConvertFrom-Json
     $d | Add-Member -NotePropertyName providers -NotePropertyValue $snap -Force
-    $d | ConvertTo-Json -Depth 20 | Set-Content $settings -Encoding UTF8
-    Log "[OK] 已从快照恢复 $n 个 provider（重启 Qoder 后生效）"
+    [IO.File]::WriteAllText($settings, ($d | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+    Log "[OK] 已从快照恢复 $n 个 provider（无 BOM 写入，重启 Qoder 后生效）"
   } catch { Log "[X] 快照恢复失败: $($_.Exception.Message)" }
 }
 

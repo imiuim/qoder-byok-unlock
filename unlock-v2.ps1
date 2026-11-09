@@ -123,13 +123,39 @@ if(-not (Test-Path $fusesJs)){ Fail '@electron/fuses 不可用' }
 Backup $exePath
 $flip=Join-Path $env:TEMP 'qoder-flip-v2.cjs'
 @'
+// 不依赖 FuseV1Options 枚举(某些 @electron/fuses 版本只导出 2 项，导致
+// EnableEmbeddedAsarIntegrityValidation===undefined，flipFuses 什么也不做)。
+// 直接按 wire 布局把 index 4 置为 48('0'=disabled)。
+const fs=require('fs');const path=require('path');
 const f=require(process.argv[3]);
-(async()=>{await f.flipFuses(process.argv[2],{version:f.FuseVersion.V1,[f.FuseV1Options.EnableEmbeddedAsarIntegrityValidation]:false});
-console.log('fuse wire:',JSON.stringify(await f.getCurrentFuseWire(process.argv[2])));})().catch(e=>{console.error('ERR',e.message);process.exit(1)});
+const {SENTINEL}=require(path.join(path.dirname(process.argv[3]),'constants.js'));
+const exe=process.argv[2];
+const b=fs.readFileSync(exe);
+const pos=b.indexOf(Buffer.from(SENTINEL));
+if(pos<0)throw new Error('fuse sentinel not found');
+const wp=pos+Buffer.byteLength(SENTINEL);
+const version=b[wp],len=b[wp+1];
+if(String(version)!==String(f.FuseVersion.V1))throw new Error('fuse wire version mismatch: '+version);
+if(len<=4)throw new Error('fuse wire too short: '+len);
+b[wp+2+4]=48;
+fs.writeFileSync(exe,b);
+console.log('fuse wire:',JSON.stringify(Array.from(b.slice(wp+2,wp+2+len))));
 '@ | Set-Content $flip -Encoding UTF8
 node $flip $exePath $fusesJs 2>$null
 if($LASTEXITCODE -ne 0){ Fail 'fuse 翻转失败' }
-Ok 'fuse 已关闭'
+# 二次校验：确认 index 4 真的关了，否则改了 asar 应用会拒绝启动
+$verify = Join-Path $env:TEMP 'qoder-fuse-verify.cjs'
+@'
+const fs=require('fs');const path=require('path');
+const {SENTINEL}=require(path.join(path.dirname(process.argv[2]),'constants.js'));
+const b=fs.readFileSync(process.argv[1]);
+const wp=b.indexOf(Buffer.from(SENTINEL))+Buffer.byteLength(SENTINEL);
+if(b[wp+2+4]!==48){console.error('fuse still ENABLED');process.exit(1)}
+console.log('fuse OFF verified');
+'@ | Set-Content $verify -Encoding UTF8
+node $verify $exePath $fusesJs 2>$null
+if($LASTEXITCODE -ne 0){ Fail 'fuse 关闭校验失败（不要改 asar，应用会无法启动）' }
+Ok 'fuse 已关闭并校验'
 
 # ---------- P1-P4 asar ----------
 Info "读取 app.asar ($([math]::Round((Get-Item $asarPath).Length/1MB))MB)..."
