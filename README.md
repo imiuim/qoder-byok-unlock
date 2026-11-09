@@ -2,7 +2,9 @@
 
 一键解锁 Qoder（Windows）自定义模型 / 自带 Provider（BYOK）在**全部产品面**的使用——包括普通会话与**智能体团队（多智能体）**。
 
-适用版本：**Qoder 0.5.x**（在 0.5.6 上开发并实测通过；锚点为内容匹配，0.5.x 小版本差异大多可自适应）。
+适用版本：**Qoder 0.5.x**（0.5.6 / 0.5.7 均已适配）。
+
+> **0.5.7 用户注意**：Qoder 更新后把 `app.asar` 从 `.qoder-versions\<版本>\resources\` 移到了 `<安装目录>\resources\`。旧版 `unlock.ps1` 和看门狗会继续盯着旧目录，导致"补丁在位"但实际运行的是未打补丁的新版本，团队对话失效并回退到官方模型（服务端返回 403 code 112）。**请用 `unlock-v2.ps1`**（自动识别两种布局）；`watchdog.ps1 -AutoRepair` 已同步支持新布局。
 
 ## 逆向后发现的三层锁
 
@@ -54,6 +56,16 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 > 注：由 v1.x 脚本（fuse 备份顺序有误的旧版）创建的 `.bak-unlock` exe 备份本身就是 fuse 已关闭的状态，用旧备份回滚后请务必补跑 `restore-fuse.ps1`。
 
 ## 更新日志
+
+### 2026-11-09（v1.4 适配 Qoder 0.5.7 自动更新）
+
+- **根因**：0.5.7 起 `app.asar` 改为 `<安装目录>\resources\app.asar`(根目录布局)，不再在 `.qoder-versions\<版本>\`。自动更新后旧补丁全部落空，运行的是干净版本；团队会话回退到官方 `auto` 模型 → 请求打向 Qoder 服务端 → 403 `code 112` → 提示无法继续团队对话。
+- **新增 `unlock-v2.ps1`**：自动识别两种布局；P3 门控在 0.5.7 已移除则跳过；P6 按版本自适应(`SE/hn` → `DE/En`)，改为保留原函数的最小注入(通过 `process.getBuiltinModule` 读 settings.json，不依赖混淆名)，写入前对整个 worker 执行 `node --check`；fuse、备份、原子写、幂等一并具备。
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File unlock-v2.ps1
+  ```
+- **watchdog 同步**：优先识别根目录布局，兼容两种 P6 特征，自动修复改调 `unlock-v2.ps1`，日志标注布局。
+- 0.5.7 实测：P1/P2/P4/P5/P6 全部命中(P3 无需)，watchdog 报告 `Qoder (root布局) 补丁在位`。
 
 ### 2026-11-09（v1.3 迁移可靠性 + 配置自愈）
 
