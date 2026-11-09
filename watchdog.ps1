@@ -45,10 +45,18 @@ function Read-StateIni {
     if ($line -match '^\s*appExecutable\s*=\s*(.+?)\s*$') { $appExe = $Matches[1].Trim() }
   }
   if (-not $installDir -or -not $appExe) { return $null }
-  # appExecutable 两种形态：.qoder-versions\0.5.6\Qoder.exe 或裸 Qoder.exe
-  # 裸形态时取 .qoder-versions 下语义化版本最新的目录
   $exePath = Join-Path $installDir $appExe
   if (-not (Test-Path $exePath)) { return $null }
+  # 0.5.7+ 新布局优先：app.asar 直接在 <root>\resources\
+  if (Test-Path (Join-Path $installDir 'resources\app.asar')) {
+    return @{
+      InstallDir = $installDir
+      ExePath    = $exePath
+      VersionDir = $installDir
+      Layout     = 'root'
+    }
+  }
+  # 0.5.6 旧布局：.qoder-versions\<ver>
   $versionDir = $null
   if ($appExe -match '\.qoder-versions[\\/](\d+\.\d+\.\d+)') {
     $versionDir = Join-Path $installDir ('.qoder-versions\' + $Matches[1])
@@ -66,6 +74,7 @@ function Read-StateIni {
     InstallDir = $installDir
     ExePath    = $exePath
     VersionDir = $versionDir
+    Layout     = 'versions'
   }
 }
 
@@ -80,7 +89,9 @@ try {
   out.asarOk = asar.includes(Buffer.from('models:z.filter(M=>M!==null)/*', 'utf8'));
   const wk = fs.readFileSync(workerPath, 'utf8');
   out.workerP5Ok = wk.includes('featureSwitches?.allow_byok??0)>=1');
-  out.workerP6Ok = wk.includes('replaceCustomProviderSettings?.(d.providers)');
+  // P6 两种形态：v1 全量替换(SE) / v2 最小注入(DE)，任一命中即可
+  out.workerP6Ok = wk.includes('replaceCustomProviderSettings?.(d.providers)') ||
+                   wk.includes('e.startsWith("qoder-custom-")');
 } catch (e) { out.error = e.message; }
 console.log(JSON.stringify(out));
 '@ | Set-Content $checkScript -Encoding UTF8
@@ -151,6 +162,7 @@ function Invoke-Check {
     return
   }
   $verName = Split-Path $ver.VersionDir -Leaf
+  if ($ver.Layout -eq 'root') { $verName = "$(Split-Path $ver.InstallDir -Leaf) (root布局)" }
   $st = Test-PatchState $ver
 
   if ($st.ok) {
@@ -167,7 +179,7 @@ function Invoke-Check {
 
   if ($AutoRepair) {
     Log '[..] 自动修复: 重跑 unlock.ps1（会结束 Qoder 进程）...'
-    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'unlock.ps1') 2>&1
+    $out = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'unlock-v2.ps1') 2>&1
     $code = $LASTEXITCODE
     $out | ForEach-Object { Log "    $_" }
     if ($code -eq 0) {
@@ -183,7 +195,7 @@ function Invoke-Check {
       Log "[X] unlock.ps1 退出码 $code（可能版本锚点漂移，需人工适配），未重启 Qoder"
     }
   } else {
-    Log '[!] 未启用 -AutoRepair，请手动执行: powershell -ExecutionPolicy Bypass -File unlock.ps1'
+    Log '[!] 未启用 -AutoRepair，请手动执行: powershell -ExecutionPolicy Bypass -File unlock-v2.ps1'
   }
 }
 
