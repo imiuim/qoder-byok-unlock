@@ -145,14 +145,15 @@ node $flip $exePath $fusesJs 2>$null
 if($LASTEXITCODE -ne 0){ Fail 'fuse 翻转失败' }
 # 二次校验：确认 index 4 真的关了，否则改了 asar 应用会拒绝启动
 $verify = Join-Path $env:TEMP 'qoder-fuse-verify.cjs'
-@'
+$verifySource = @'
 const fs=require('fs');const path=require('path');
-const {SENTINEL}=require(path.join(path.dirname(process.argv[2]),'constants.js'));
+const {SENTINEL}=require(path.join(path.dirname(process.argv[3]),'constants.js'));
 const b=fs.readFileSync(process.argv[1]);
 const wp=b.indexOf(Buffer.from(SENTINEL))+Buffer.byteLength(SENTINEL);
 if(b[wp+2+4]!==48){console.error('fuse still ENABLED');process.exit(1)}
 console.log('fuse OFF verified');
-'@ | Set-Content $verify -Encoding UTF8
+'@
+[IO.File]::WriteAllText($verify, $verifySource, (New-Object Text.UTF8Encoding($false)))
 node $verify $exePath $fusesJs 2>$null
 if($LASTEXITCODE -ne 0){ Fail 'fuse 关闭校验失败（不要改 asar，应用会无法启动）' }
 Ok 'fuse 已关闭并校验'
@@ -170,6 +171,9 @@ if($p3a -eq 1){ $buf=Replace-Once $buf 'function R7x(c,x){if(!c)return;' 'functi
 elseif($p3b -ge 1){ $buf=Replace-Once $buf 'zXe(t,e){if(t)return' 'zXe(t,e){if(1)return' 'P3(zXe)' }
 else { Info 'P3 门控在新版本已移除，无需补丁' }
 $buf = Replace-Once $buf 'E=V==="cloud"' 'E=0===1&&V==1' 'P4' 'E=0===1&&V==1'
+# P7 协作探针守卫(0.5.7+): z$0 的 x!==null 守卫导致探针异常时协作永关。
+# 等长反转条件(34→34字符): 探针失败/无占用 → 默认全开。
+$buf = Replace-Once $buf 'if(x!==null||e===void 0)return Mw;' 'if(x===null&&e===void 0)return Mw;' 'P7 协作探针守卫' 'if(x===null&&e===void 0)return Mw;'
 $tmpAsar="$asarPath.tmp-unlock"
 [IO.File]::WriteAllBytes($tmpAsar,$buf)
 Remove-Item $asarPath -Force
