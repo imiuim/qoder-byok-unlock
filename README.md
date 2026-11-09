@@ -55,6 +55,20 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 ## 更新日志
 
+### 2026-11-09（v1.3 迁移可靠性 + 配置自愈）
+
+- **新增 `migrate.ps1`**：把 Qoder 用户数据安全迁到其他盘（junction 方式），修复手工迁移导致"重启后自定义模型消失"的三个 bug：
+  1. 目标目录存在就报 `skip-done`，但源目录根本不是 junction —— 迁移假成功；现在先判断源是否合法 junction，是则只验证；
+  2. 建完 junction 不验证属性，被应用重建/替换也无人发现；现在验证 `ReparsePoint` 属性与目标可达性，失败自动回滚；
+  3. 迁移不校验 `settings.json` 的 BYOK providers，配置丢失无感知；现在按"谁有 providers 谁为准"合并，并校验结果。
+  ```powershell
+  # 迁移到 E 盘（自动停 Qoder、迁移、建 junction、校验、重启）
+  powershell -ExecutionPolicy Bypass -File migrate.ps1 -TargetRoot E:\QoderData
+  # 只体检，不改动
+  powershell -ExecutionPolicy Bypass -File migrate.ps1 -TargetRoot E:\QoderData -VerifyOnly
+  ```
+- **watchdog 增加 provider 配置自愈**：每次检查维护 `~/.qoder/providers.snapshot.json` 快照；发现 `settings.json` 的 providers 为空（重启/迁移后模型消失的主因）时，日志报警，`-AutoRepair` 模式下自动从快照恢复。实测通过。
+
 ### 2026-11-08（v1.2 看门狗）
 
 - **新增 `watchdog.ps1`**：定时校验当前运行版本的 BYOK 补丁是否在位（只读检查，node 校验 asar/worker 特征串）；失效时可选 `-AutoRepair` 自动重跑 unlock.ps1 并重启 Qoder。日志写入 `watchdog.log`，状态存 `watchdog.state.json`（避免每次轮询刷日志）。

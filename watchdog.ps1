@@ -111,7 +111,39 @@ function Set-LastState($status, $detail){
     ConvertTo-Json | Set-Content $StateFile -Encoding UTF8
 }
 
+function Invoke-ProviderConfigCheck {
+  # BYOK provider 配置自愈：settings.json 的 providers 丢失是"重启后模型消失"的主因
+  $settings = Join-Path $env:USERPROFILE '.qoder\settings.json'
+  $snapshot = Join-Path $env:USERPROFILE '.qoder\providers.snapshot.json'
+  if (-not (Test-Path $settings)) { Log '[!] settings.json 不存在，跳过配置检查'; return }
+  $providers = $null
+  try { $providers = (Get-Content $settings -Raw | ConvertFrom-Json).providers } catch { Log '[!] settings.json 解析失败'; return }
+  $count = if ($providers) { @($providers.PSObject.Properties.Name).Count } else { 0 }
+
+  if ($count -gt 0) {
+    # 配置健在：更新快照（含首次建立）
+    try {
+      $providers | ConvertTo-Json -Depth 20 | Set-Content $snapshot -Encoding UTF8
+    } catch {}
+    return
+  }
+
+  Log "[X] settings.json 的 BYOK providers 为空（模型会消失）"
+  if (-not (Test-Path $snapshot)) { Log '[!] 无 providers.snapshot.json 快照，无法自动恢复'; return }
+  if (-not $AutoRepair) { Log '[!] 未启用 -AutoRepair，可用该参数自动从快照恢复'; return }
+  try {
+    $snap = Get-Content $snapshot -Raw | ConvertFrom-Json
+    $n = if ($snap) { @($snap.PSObject.Properties.Name).Count } else { 0 }
+    if ($n -eq 0) { Log '[!] 快照为空，跳过恢复'; return }
+    $d = Get-Content $settings -Raw | ConvertFrom-Json
+    $d | Add-Member -NotePropertyName providers -NotePropertyValue $snap -Force
+    $d | ConvertTo-Json -Depth 20 | Set-Content $settings -Encoding UTF8
+    Log "[OK] 已从快照恢复 $n 个 provider（重启 Qoder 后生效）"
+  } catch { Log "[X] 快照恢复失败: $($_.Exception.Message)" }
+}
+
 function Invoke-Check {
+  Invoke-ProviderConfigCheck
   $ver = Read-StateIni
   if (-not $ver) {
     Log '[!] 未读到启动器 state.ini 的运行版本（Qoder 未安装或未运行过），跳过'
