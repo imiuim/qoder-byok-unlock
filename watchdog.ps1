@@ -206,8 +206,22 @@ if ($CheckOnce) {
   Invoke-Check
   exit 0
 }
+
+# 单实例锁：登录触发器可能多次触发，避免两个守护进程同时检查/重复重打补丁
+$createdNew = $false
+$mutex = New-Object System.Threading.Mutex($true, 'Global\QoderByokWatchdog', ([ref]$createdNew))
+if (-not $createdNew) {
+  Log '[..] 已有一个看门狗在运行，本实例退出'
+  $mutex.Dispose()
+  exit 0
+}
 Log "看门狗启动 (interval=${IntervalSec}s, autoRepair=$AutoRepair)"
-while ($true) {
-  try { Invoke-Check } catch { Log "[X] 检查异常: $($_.Exception.Message)" }
-  Start-Sleep $IntervalSec
+try {
+  while ($true) {
+    try { Invoke-Check } catch { Log "[X] 检查异常: $($_.Exception.Message)" }
+    Start-Sleep $IntervalSec
+  }
+} finally {
+  $mutex.ReleaseMutex()
+  $mutex.Dispose()
 }
