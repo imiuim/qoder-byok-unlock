@@ -111,6 +111,10 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 注意：原指令文本若已丢失，只能按名称/角色重写通用指令；团队配置（名称/成员）可从 `team-profiles.list` 与 `main.sqlite` 读回。
 
+### "这个个人模型已被删除或不再属于当前账号。请选择其他模型后重试。"（发消息时报）
+
+0.5.7 的主进程每分钟向服务端拉一次模型策略快照。BYOK 请求偶发约 20 秒超时，超时后快照会把 `byokModelCount` 提交成 0 —— 在这个一分钟窗口内发送任何消息都会报上面的弹窗（`main.log` 可见 `errorKind:"ByokModelError"`），**下一分钟自动恢复**，配置本身没丢。同步 `watchdog.ps1` 已加自愈：检测到最近日志出现该特征时无 BOM 重写 `settings.json` 触发目录重载。遇到该弹窗直接重试即可；频繁出现请检查到 Qoder 服务端的网络。
+
 ## 更新日志
 
 ### 2026-11-10（v1.6 旧团队会话恢复：服务端 Discussion 已清，旧盒转普通 BYOK 会话）

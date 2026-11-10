@@ -8,8 +8,10 @@
     - 在位        -> 静默/记日志
     - 失效/被更新 -> AutoRepair 模式下自动重跑 unlock.ps1（会结束 Qoder 进程）
                     并重启 Qoder；否则只记日志提醒
-  注意：只能修复客户端补丁丢失（版本更新/切换导致）。智能体团队的服务端
-  模型目录限制、BYOK 服务未就绪的瞬时抖动不属于可修复范围。
+  另外检测 BYOK 模型目录瞬时掉线（byokModelCount:0 / ByokModelError，
+  对应弹窗「这个个人模型已被删除或不再属于当前账号」），无 BOM 重写
+  settings.json 的 providers 触发目录重载，不重启 Qoder。
+  注意：服务端团队限制、BYOK 上游服务本身不可用不属于可修复范围。
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File watchdog.ps1 -CheckOnce          # 只检查一次
   powershell -ExecutionPolicy Bypass -File watchdog.ps1 -AutoRepair         # 常驻，5 分钟一查，失效自动修复
@@ -155,8 +157,50 @@ function Invoke-ProviderConfigCheck {
   } catch { Log "[X] 快照恢复失败: $($_.Exception.Message)" }
 }
 
+function Invoke-ByokModelDropCheck {
+  # 模型策略同步抖动: 一次慢刷新会把 byokModelCount 短暂清零，此时发消息报
+  # "这个个人模型已被删除或不再属于当前账号"（main.log: ByokModelError）。
+  # 自愈方式：无 BOM 重写 settings.json 的 providers，触发目录重载；不重启 Qoder。
+  $logRoot = Join-Path $env:APPDATA 'com.qoder.app.stable\logs'
+  if (-not (Test-Path $logRoot)) { return }
+  $cut = (Get-Date).ToUniversalTime().AddMinutes(-15)
+  $hit = $null
+  foreach ($d in (Get-ChildItem $logRoot -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 2)) {
+    $f = Join-Path $d.FullName 'main.log'
+    if (-not (Test-Path $f)) { continue }
+    try {
+      foreach ($line in (Get-Content $f -Tail 1500)) {
+        if ($line -notmatch 'byokModelCount":0|ByokModelError') { continue }
+        if ($line -match '^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})') {
+          $ts = [datetime]::ParseExact($Matches[1], 'yyyy-MM-ddTHH:mm:ss', $null)
+          if ($ts -lt $cut) { continue }
+        }
+        $hit = $line
+        break
+      }
+    } catch {}
+    if ($hit) { break }
+  }
+  if (-not $hit) { $script:lastByokHit = $null; return }
+  if ($script:lastByokHit -eq $hit) { return }   # 同一次掉线只自愈一次
+  $script:lastByokHit = $hit
+  Log '[X] 检测到 BYOK 模型目录掉线（byokModelCount:0 / ByokModelError）'
+  $settings = Join-Path $env:USERPROFILE '.qoder\settings.json'
+  if (-not (Test-Path $settings)) { Log '[!] settings.json 不存在，跳过自愈'; return }
+  try {
+    $cfg = Get-Content $settings -Raw | ConvertFrom-Json
+    $n = if ($cfg.providers) { @($cfg.providers.PSObject.Properties.Name).Count } else { 0 }
+    if ($n -eq 0) { Log '[!] providers 为空，由 Invoke-ProviderConfigCheck 恢复'; return }
+    # 先删除再无 BOM 写入：保证文件变化能被 Qoder 的 settings watcher 捕获
+    Remove-Item $settings -Force
+    [IO.File]::WriteAllText($settings, ($cfg | ConvertTo-Json -Depth 20), (New-Object Text.UTF8Encoding($false)))
+    Log "[OK] 已无 BOM 重写 settings.json（$n 个 provider），触发 BYOK 目录重载，无需重启 Qoder"
+  } catch { Log "[X] BYOK 目录自愈失败: $($_.Exception.Message)" }
+}
+
 function Invoke-Check {
   Invoke-ProviderConfigCheck
+  Invoke-ByokModelDropCheck
   $ver = Read-StateIni
   if (-not $ver) {
     Log '[!] 未读到启动器 state.ini 的运行版本（Qoder 未安装或未运行过），跳过'
