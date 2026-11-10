@@ -77,6 +77,20 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 `main.sqlite` 位于 `%APPDATA%\com.qoder.app.stable\`。daemon 运行期间外部写入会导致启动时 `INVALID_SERVER_IDENTITY`（`persistAccount` 阶段失败，应用直接退出）。必须改库时：先完全退出 Qoder（含 daemon)，改完把 `application-run-state.v1` 重置为 `stopped` 再启动。改前备份整个 `com.qoder.app.stable` 目录。
 
+
+### 旧对话框在侧栏"消失"（转换后）—— discussionContext 隐藏过滤
+
+症状：把旧团队会话  从  改成  后，对话框从侧栏工作区列表里全部消失，只剩 2-3 个，但数据仍在 。
+
+根因（0.5.7 实测）：
+1. 侧栏工作区列表的过滤函数（asar 内 ）会**丢弃带  且  的会话**（设计上这类会话应显示在"讨论"区）。旧团队会话的  来自  里 52 条 legacy turns 的 /（不来自 ，所以改库、删 / 都无效）。
+2. 原  里的  正是让这些会话显示在工作区列表的"闸门"；转换时把它删掉后， 变成 undefined → 被过滤 → 侧栏"全没了"（服务端 discussion 已删，"讨论"区也没有）。
+
+修复（Qoder 完全退出后）：
+
+重启后 catalog 里这些会话的  变为 undefined，工作区列表恢复（实测 一点 15 条 / 社区 17 条全部回归，发送仍成功）。
+注意：不要用"只改 discussionTeamId"或"删 discussion_launches/inbox"的绕路，验证过无效。
+
 ## 更新日志
 
 ### 2026-11-10（v1.6 旧团队会话恢复：服务端 Discussion 已清，旧盒转普通 BYOK 会话）
