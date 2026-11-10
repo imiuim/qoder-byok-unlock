@@ -80,16 +80,18 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 ### 旧对话框在侧栏"消失"（转换后）—— discussionContext 隐藏过滤
 
-症状：把旧团队会话  从  改成  后，对话框从侧栏工作区列表里全部消失，只剩 2-3 个，但数据仍在 。
+症状：把旧团队会话 `extra_json.source` 从 `discussion` 改成 `workspace` 后，对话框从侧栏工作区列表里全部消失，只剩 2-3 个，但数据仍在 `chat_sessions`。
 
 根因（0.5.7 实测）：
-1. 侧栏工作区列表的过滤函数（asar 内 ）会**丢弃带  且  的会话**（设计上这类会话应显示在"讨论"区）。旧团队会话的  来自  里 52 条 legacy turns 的 /（不来自 ，所以改库、删 / 都无效）。
-2. 原  里的  正是让这些会话显示在工作区列表的"闸门"；转换时把它删掉后， 变成 undefined → 被过滤 → 侧栏"全没了"（服务端 discussion 已删，"讨论"区也没有）。
+1. 侧栏工作区列表的过滤函数（asar 内 `uB1`）会**丢弃带 `discussionContext` 且 `discussionContext.visibility !== "hidden"` 的会话**（设计上这类会话应显示在"讨论"区）。旧团队会话的 `discussionContext` 来自 `%APPDATA%\com.qoder.app.stable\qoder-data.v1.json` 里 52 条 legacy turns 的 `discussionId`/`sourceMessageId`（**不来自 `main.sqlite`**，所以改库、删 `discussion_launches`/`agent_inbox_items` 都无效）。
+2. 原 `extra_json` 里的 `discussionVisibility:"hidden"` 正是让这些会话显示在工作区列表的"闸门"；转换时把它删掉后，`visibility` 变成 undefined → 被过滤 → 侧栏"全没了"（服务端 discussion 已删，"讨论"区也没有）。
 
 修复（Qoder 完全退出后）：
+1. 备份 `qoder-data.v1.json`；
+2. 用 Python 读入该 JSON，对 `d["turns"]` 每一项 `pop("discussionId")` / `pop("sourceMessageId")`，用 `ensure_ascii=False` 写回；
+3. 重启 Qoder。catalog 里这些会话的 `discussionContext` 变为 undefined，工作区列表恢复（实测 一点 15 条 / 社区 17 条全部回归，发送仍成功）。
 
-重启后 catalog 里这些会话的  变为 undefined，工作区列表恢复（实测 一点 15 条 / 社区 17 条全部回归，发送仍成功）。
-注意：不要用"只改 discussionTeamId"或"删 discussion_launches/inbox"的绕路，验证过无效。
+注意：不要用"只改 discussionTeamId"或"删 discussion_launches/inbox"的绕路，均已验证无效。
 
 ## 更新日志
 
