@@ -93,6 +93,24 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 注意：不要用"只改 discussionTeamId"或"删 discussion_launches/inbox"的绕路，均已验证无效。
 
+### "暂不支持远程设备的 Team Leader，请在 Discussion 中使用此团队"
+
+根因（0.5.7 实测）：这不是账号或补丁问题，而是**智能体的本地定义文件丢失**。本地定义存放在 `%USERPROFILE%\.qodergents\*.md`（YAML frontmatter: `name` / `description`，正文是指令）。迁移 Qoder 数据 / 清理旧 `.qoder` 目录时若把该目录删掉：
+
+1. `AgentDefinitions` 扫描结果 `definitionCount: 0`；
+2. `agent-profile.prepare` 报 `AGENT_DEFINITION_UNAVAILABLE`，20 个自定义智能体无法注册为本地 Agent；
+3. 团队的队长只存在于云端目录 `agent-profile.directory` → 新聊天框的 `teamLeaderLocations` 判定为 `remote` → 弹出上面的提示；
+4. Discussion 里团队成员全部 `profileStatus: unavailable`，发消息没人接。
+
+恢复步骤（Qoder 完全退出后）：
+- 在 `%USERPROFILE%\.qodergents\` 重新写定义文件，或用 `window.qoderDesktop.executeCommand({type:"agent-configurations.create", runtimeEngineId:"runtime:qoder", name, description, instructions, usageScopes:["main","subagent","collaboration"], enabled:true, projectIds:[]})` 逐个重建（同名旧 profile 可能报 `AGENT_DEFINITION_NAME_CONFLICT`，需先从 `main.sqlite` 清掉残留的 `agent_profiles`/`agent_runtimes` 行，改前备份）；
+- 用 `squads.create` 以**本地 profile id** 作为 `leaderAgentId` / `memberAgentIds` 重建团队；
+- 旧的云端团队用 `squads.set-archived {archived:true}` 归档（直接 `squads.delete` 会报 `TEAM_NOT_ARCHIVED`）。
+
+验证：`agent-configurations.list` 能看到重建的 Agent、`agent-profile.local-statuses` 全部 `online`、按 `ZA2` 逻辑复算每个团队的 leader location 为 `local`。
+
+注意：原指令文本若已丢失，只能按名称/角色重写通用指令；团队配置（名称/成员）可从 `team-profiles.list` 与 `main.sqlite` 读回。
+
 ## 更新日志
 
 ### 2026-11-10（v1.6 旧团队会话恢复：服务端 Discussion 已清，旧盒转普通 BYOK 会话）
