@@ -59,25 +59,33 @@ powershell -ExecutionPolicy Bypass -File restore-fuse.ps1 -ExePath "E:\Qoder\.qo
 
 ### 团队会话提示"当前账号无法继续此团队会话 / 请切回创建会话的账号"
 
-这不是客户端补丁失效。本地数据（`main.sqlite` 里 `agent_teams`/`agent_team_members` 的 `account_id`）与当前登录账号一致时仍出现，说明是**服务端账号身份重绑定**：
+2026-11-10 实测根因（与账号身份无关，此前"账号重绑定"的判断是错的）：
 
-判别证据（按顺序查）：
-1. `%APPDATA%\com.qoder.app.stable\logs\<最新>\main.log` 出现 `QODER_APP_QCS_ACCOUNT_CHANGED` —— 服务端通知过账号身份变更
-2. `~/.qoder/state.json` 的 `lastLoginMethod` 为 `job_token` —— 客户端以任务令牌方式认证，与正常浏览器登录的身份不同
-3. `main.sqlite` 的 `collaboration_runtime_credentials` 出现两个不同的 `qoder:prod:global:<hash>` scope —— 两个身份的运行凭证并存
+- Qoder 官方**协作服务重构期间清空了服务端 Discussion 数据**。旧团队会话的 `discussionTeamId` 在服务端已不存在（`discussions.get` 返回 `not_found`），而 chat_session 与 discussion 的绑定在服务端创建时写入、不可改向。
+- 此时在旧团队会话里点发送，daemon 返回 `CHAT_SESSION_TEAM_READ_ONLY`，UI 弹"当前账号无法继续此团队会话，本机历史仍可查看…"。**本地数据完好，只是该对话框在服务端被标记只读**。
 
-常见诱因：客户端大版本更新后重新认证（如 0.5.6→0.5.7)，服务端把同一邮箱的内部账号 ID 换了，已创建的团队会话仍绑定旧身份。
+判别证据：
+1. CDP 打开 `http://127.0.0.1:9222`（Qoder 需带 `--remote-debugging-port=9222` 启动），渲染层执行 `window.qoderDesktop.requestCollaboration({type:'discussions.get',discussionId:'<会话 extra_json 里 discussionTeamContext.discussionTeamId>'})` 返回 `not_found`
+2. 发送后 `main.log` 无 team-sessions 调用，`renderer.log` 出现 `send host operation settled ... result:"failure"`（85ms 左右即失败 = 本地/服务端校验拒绝，非网络超时）
 
-处理：
-- 退出登录，用**正常浏览器方式**重新登录（避免 job_token 方式）
-- **新建**团队会话（新会话绑定当前身份，可用）；旧会话需 Qoder 官方在服务端迁移归属
-- 本地数据库无需也不应改动（见下条警告）
+处理（已验证可行）：
+- **旧对话框转为普通 BYOK 会话**：停 Qoder → 备份 `main.sqlite` → 把该会话 `extra_json` 里的 `discussionTeamContext`/`discussionVisibility`/`historyRecoveryBackgroundAgents` 删掉、`source` 改为 `"workspace"` → 重启。同一对话框、完整历史保留，发送走普通 BYOK 路径（实测 `send host operation settled result:"success"`）。批量脚本见仓库 `batch-convert.py`（先 `--dry-run` 打印计划）。
+- **需要多智能体团队语义**：旧盒无法恢复（服务端绑定已删），用"创建智能体团队"新建团队会话即可（团队定义与 Agent 均在本地，`team-profiles.list` 返回完整）；新建时勾选"引用的会话"可把旧会话历史带入新团队任务（`referencedChatSessionIds`）。
+- ⚠️ 不要试图只改 `discussionTeamId` 重绑到新 discussion：发送会被服务端以 `CHAT_SESSION_TEAM_READ_ONLY` 拒绝（2026-11-10 实测，新建 discussion + add-team 成功但重绑后仍只读）。
 
 ### ⚠️ 不要在 Qoder 运行时直接改 main.sqlite
 
 `main.sqlite` 位于 `%APPDATA%\com.qoder.app.stable\`。daemon 运行期间外部写入会导致启动时 `INVALID_SERVER_IDENTITY`（`persistAccount` 阶段失败，应用直接退出）。必须改库时：先完全退出 Qoder（含 daemon)，改完把 `application-run-state.v1` 重置为 `stopped` 再启动。改前备份整个 `com.qoder.app.stable` 目录。
 
 ## 更新日志
+
+### 2026-11-10（v1.6 旧团队会话恢复：服务端 Discussion 已清，旧盒转普通 BYOK 会话）
+
+- **根因查明**：协作服务重构期间服务端清空了 Discussion 数据。旧团队会话的 `discussionTeamId` 在服务端 `not_found`，且 chat_session↔discussion 绑定创建时写入、不可改向 → 发送被拒 `CHAT_SESSION_TEAM_READ_ONLY`（"当前账号无法继续此团队会话"）。与账号身份无关（此前"账号重绑定"结论有误，同日纠正）。
+- **旧对话框恢复发送（实测）**：停 Qoder → 备份 `main.sqlite` → 删除 `chat_sessions.extra_json` 的 `discussionTeamContext`/`discussionVisibility`/`historyRecoveryBackgroundAgents`、`source` 改为 `"workspace"` → 重启。同一对话框、历史完整保留，发送走普通 BYOK 路径（`send host operation settled result:"success"`，模型 24s 后出首个 delta，回合持续流式输出）。批量脚本：`batch-convert.py`（`--dry-run` 先打印计划）。
+- **新建 discussion 全链路实测**（`create-disc.js`）：`discussions.create` → `discussion-members.add-team`（带 `teamProfileId`+`configurationVersion`）→ `discussion-members.list`，团队与 5 名 Agent 成员均加入成功。仅用于验证后端已恢复；旧会话重绑到此 discussion 仍被服务端只读拒绝（见上）。
+- **后台 Agent 历史恢复**：打开旧团队会话时 UI 右侧自动列出中断的 `historyRecoveryBackgroundAgents`（如"修复P1-2乐观锁生效"等子任务），`main.log` 可见 460+ 工作项执行——中断任务在原盒内以普通 BYOK 回合继续。
+- 排障段落同步重写：含 CDP 探针命令、判别证据、正确/错误处理方式。
 
 ### 2026-11-09（v1.5 fuse 与 BOM 两个致命 bug）
 
